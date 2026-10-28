@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import numpy as np
 
 
 # fix seed so that random initialization always performs the same 
@@ -17,9 +18,9 @@ N = nn.Sequential(nn.Linear(10, 10, bias=False),
 x = torch.rand((1,10)) # the first dimension is the batch size; the following dimensions the actual dimension of the data
 x.requires_grad_() # this is required so we can compute the gradient w.r.t x
 
-t = 0 # target class
+t = 1 # target class
 
-epsReal = 0.5  #depending on your data this might be large or small
+epsReal = 0.3  #depending on your data this might be large or small
 eps = epsReal - 1e-7 # small constant to offset floating-point erros
 
 # The network N classfies x as belonging to class 2
@@ -36,11 +37,53 @@ loss.backward()
 # your code here
 # adv_x should be computed from x according to the fgsm-style perturbation such that the new class of xBar is the target class t above
 # hint: you can compute the gradient of the loss w.r.t to x as x.grad
-adv_x = TODO
+for epsReal in np.linspace(0.01, 0.75, 75):
+    eps = epsReal - 1e-7
+    print(eps)
+    num_restarts = 5
+    num_iterations = 20
+    alpha = eps / num_iterations
 
-new_class = N(adv_x).argmax(dim=1).item()
-print("New Class: ", new_class)
-assert(new_class == t)
-# it is not enough that adv_x is classified as t. We also need to make sure it is 'close' to the original x. 
-print(torch.norm((x-adv_x),  p=float('inf')).data)
-assert( torch.norm((x-adv_x), p=float('inf')) <= epsReal)
+    for restart in range(num_restarts):
+        adv_x = x.clone().detach()
+        random_noise = torch.empty_like(x).uniform_(-eps, eps)
+        adv_x = adv_x + random_noise
+        adv_x = torch.clamp(adv_x, min=x - eps, max=x + eps)
+
+        adv_x = adv_x.detach() 
+        breakout = False
+        for i in range(num_iterations):
+            adv_x.requires_grad_(True)
+            
+            if N(adv_x).argmax(dim=1).item() == t:
+                print(f"Attack succeeded on restart {restart}, iteration {i}")
+                breakout = True
+                break 
+                
+            output = N(adv_x)
+            loss = L(output, torch.tensor([t], dtype=torch.long))
+            
+            N.zero_grad()
+            if adv_x.grad is not None:
+                adv_x.grad.zero_()
+                
+            loss.backward()
+            
+            with torch.no_grad():
+                eta = alpha * adv_x.grad.sign()
+                adv_x = adv_x - eta
+                adv_x = torch.clamp(adv_x, min=x - eps, max=x + eps)
+                
+            adv_x = adv_x.detach()
+        if breakout:
+            break
+
+    new_class = N(adv_x).argmax(dim=1).item()
+    print("New Class: ", new_class)
+    print(torch.norm(x, p=float('inf')).data)
+    print(torch.norm(adv_x, p=float('inf')).data)
+    print(torch.norm((x-adv_x),  p=float('inf')).data)
+    print(f"Matched New Class:{new_class == t}")
+    # it is not enough that adv_x is classified as t. We also need to make sure it is 'close' to the original x. 
+
+    assert(torch.norm((x-adv_x), p=float('inf')) <= epsReal)
